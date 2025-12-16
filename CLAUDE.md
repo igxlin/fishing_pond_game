@@ -24,7 +24,7 @@ Inspired by Robert Axelrod's Iterated Prisoner's Dilemma Tournament, but with dy
 
 **Pond Dynamics:**
 - Initial pond: 100 fish
-- Growth rate: 20% per turn (of remaining fish)
+- Growth rate: **15%-25% per turn** (randomly varies each turn to add uncertainty)
 - Fishing duration: 10 turns per pairing
 - Maximum catch per turn: 30 fish per person
 
@@ -32,7 +32,8 @@ Inspired by Robert Axelrod's Iterated Prisoner's Dilemma Tournament, but with dy
 - Each turn, both players simultaneously decide how many fish to catch (0-30)
 - **Success case**: If `player1_catch + player2_catch <= pond_fish`
   - Each player gets their requested catch
-  - Remaining fish reproduce: `new_fish = remaining * 1.2`
+  - Remaining fish reproduce: `new_fish = remaining * random_growth_rate` (between 1.15x and 1.25x)
+  - The exact growth rate is unpredictable, making optimal strategies harder to calculate
 - **Overfishing case**: If `player1_catch + player2_catch > pond_fish`
   - Both players get 0 fish
   - Pond immediately depletes to 0 (game ends early for this pair)

@@ -5,6 +5,7 @@
 require 'optparse'
 require_relative '../lib/game/tournament'
 require_relative '../lib/game/round'
+require_relative '../lib/game/player_anonymizer'
 require_relative '../lib/report_generator'
 require_relative '../lib/strategy/examples/random_strategy'
 require_relative '../lib/strategy/examples/conservative_strategy'
@@ -64,17 +65,27 @@ OptionParser.new do |opts|
   end
 end.parse!
 
+# Create anonymizer to prevent cheating
+anonymizer = PlayerAnonymizer.new
+
 # Load strategies based on mode
 strategies = case options[:mode]
 when :demo
-  {
+  real_strategies = {
     "Alice" => RandomStrategy.new("Alice"),
     "Bob" => RandomStrategy.new("Bob"),
     "Carol" => RandomStrategy.new("Carol"),
     "Dave" => RandomStrategy.new("Dave")
   }
+  # Anonymize player names
+  anonymized = {}
+  real_strategies.each do |real_name, strategy|
+    anon_id = anonymizer.anonymize(real_name)
+    anonymized[anon_id] = strategy
+  end
+  anonymized
 when :dry_run
-  {
+  real_strategies = {
     "Conservative" => ConservativeStrategy.new("Conservative"),
     "Greedy" => GreedyStrategy.new("Greedy"),
     "TitForTat" => TitForTatStrategy.new("TitForTat"),
@@ -82,6 +93,13 @@ when :dry_run
     "Punisher" => PunisherStrategy.new("Punisher"),
     "Random" => RandomStrategy.new("Random")
   }
+  # Anonymize player names
+  anonymized = {}
+  real_strategies.each do |real_name, strategy|
+    anon_id = anonymizer.anonymize(real_name)
+    anonymized[anon_id] = strategy
+  end
+  anonymized
 when :tournament
   # Load all strategies from strategies/ directory
   puts "🔍 Loading strategies from strategies/ directory..."
@@ -103,9 +121,10 @@ when :tournament
 
       new_classes.each do |klass|
         next if klass.name.nil?
-        player_name = klass.name
-        strats[player_name] = klass.new(player_name)
-        puts "  ✓ #{player_name}"
+        real_name = klass.name
+        anon_id = anonymizer.anonymize(real_name)
+        strats[anon_id] = klass.new(real_name)
+        puts "  ✓ #{real_name} (anonymized as #{anon_id})"
       end
     rescue StandardError => e
       puts "  ⚠️  Skipped #{File.basename(file)}: #{e.message}"
@@ -135,9 +154,10 @@ when :custom
 
       new_classes.each do |klass|
         next if klass.name.nil? # Skip anonymous classes
-        player_name = klass.name
-        strats[player_name] = klass.new(player_name)
-        puts "✓ Loaded: #{player_name} from #{File.basename(file)}"
+        real_name = klass.name
+        anon_id = anonymizer.anonymize(real_name)
+        strats[anon_id] = klass.new(real_name)
+        puts "✓ Loaded: #{real_name} (anonymized as #{anon_id}) from #{File.basename(file)}"
       end
 
       if new_classes.empty?
@@ -153,10 +173,17 @@ when :custom
   end
   strats
 else
-  {
+  real_strategies = {
     "Alice" => RandomStrategy.new("Alice"),
     "Bob" => RandomStrategy.new("Bob")
   }
+  # Anonymize player names
+  anonymized = {}
+  real_strategies.each do |real_name, strategy|
+    anon_id = anonymizer.anonymize(real_name)
+    anonymized[anon_id] = strategy
+  end
+  anonymized
 end
 
 # Ensure even number of players
@@ -166,7 +193,9 @@ end
 
 puts "🎣 Fishing Pond Game"
 puts "=" * 60
-puts "Players: #{strategies.keys.join(', ')}"
+# Display real names for organizer
+real_names = strategies.keys.map { |anon_id| anonymizer.deanonymize(anon_id) || anon_id }
+puts "Players: #{real_names.join(', ')}"
 puts "Rounds: #{options[:rounds]}"
 puts "Mode: #{options[:interactive] ? 'Interactive' : 'Batch'}"
 puts "=" * 60
@@ -185,11 +214,11 @@ end
 round_results = []
 current_round = 1
 
-def display_round_summary(round_result, all_players_history)
+def display_round_summary(round_result, all_players_history, anonymizer)
   puts "\n📊 Round #{round_result.round_number} Summary"
   puts "-" * 60
 
-  # Show pairings
+  # Show pairings (with real names)
   puts "\n🤝 Pairings:"
   round_result.pairing_results.each_value do |pr|
     mutual = round_result.pairings.any? do |p|
@@ -197,21 +226,24 @@ def display_round_summary(round_result, all_players_history)
       p.was_mutual_first_choice
     end
     mutual_tag = mutual ? " 💚 (Mutual)" : ""
-    puts "  #{pr.player1_name} vs #{pr.player2_name}#{mutual_tag}"
-    puts "    Scores: #{pr.player1_name}=#{pr.player1_total}, #{pr.player2_name}=#{pr.player2_total}"
+    p1_real = anonymizer.deanonymize(pr.player1_name) || pr.player1_name
+    p2_real = anonymizer.deanonymize(pr.player2_name) || pr.player2_name
+    puts "  #{p1_real} vs #{p2_real}#{mutual_tag}"
+    puts "    Scores: #{p1_real}=#{pr.player1_total}, #{p2_real}=#{pr.player2_total}"
 
     # Check if pond was depleted
     depleted = pr.turn_results.any? { |tr| !tr.success }
     puts "    ❌ Pond depleted!" if depleted
   end
 
-  # Show current standings
+  # Show current standings (with real names)
   puts "\n🏆 Current Standings:"
   all_players_history.map { |name, hist| [name, hist.scores.sum] }
     .sort_by { |_, score| -score }
     .each_with_index do |(name, score), idx|
       medal = ["🥇", "🥈", "🥉"][idx] || "  "
-      puts "  #{medal} #{name}: #{score} fish"
+      real_name = anonymizer.deanonymize(name) || name
+      puts "  #{medal} #{real_name}: #{score} fish"
     end
   puts
 end
@@ -258,12 +290,12 @@ if options[:interactive]
     end
 
     # Display round summary
-    display_round_summary(round_result, all_players_history)
+    display_round_summary(round_result, all_players_history, anonymizer)
 
     # Generate report if requested
     if options[:generate_reports]
       report_path = "reports/round_#{current_round}.html"
-      ReportGenerator.generate_round_report(round_result, all_players_history, report_path, strategies)
+      ReportGenerator.generate_round_report(round_result, all_players_history, report_path, strategies, anonymizer)
       puts "📄 Report saved to #{report_path}"
     end
 
@@ -314,12 +346,12 @@ else
     end
 
     # Display round summary
-    display_round_summary(round_result, all_players_history)
+    display_round_summary(round_result, all_players_history, anonymizer)
 
     # Generate report if requested
     if options[:generate_reports]
       report_path = "reports/round_#{round_number}.html"
-      ReportGenerator.generate_round_report(round_result, all_players_history, report_path, strategies)
+      ReportGenerator.generate_round_report(round_result, all_players_history, report_path, strategies, anonymizer)
       puts "📄 Report saved to #{report_path}"
     end
   end
@@ -337,11 +369,13 @@ final_scores = all_players_history.map { |name, hist| [name, hist.scores.sum] }
 puts "Final Standings:"
 final_scores.each_with_index do |(name, score), idx|
   medal = ["🥇", "🥈", "🥉"][idx] || "#{idx + 1}."
-  puts "  #{medal} #{name}: #{score} fish"
+  real_name = anonymizer.deanonymize(name) || name
+  puts "  #{medal} #{real_name}: #{score} fish"
 end
 
-winner = final_scores.first[0]
-puts "\n🎉 Winner: #{winner}!"
+winner_anon = final_scores.first[0]
+winner_real = anonymizer.deanonymize(winner_anon) || winner_anon
+puts "\n🎉 Winner: #{winner_real}!"
 puts
 
 # Display strategy thoughts if available
@@ -350,8 +384,9 @@ if strategies && !options[:generate_reports]
   puts "💭 Strategy Thoughts"
   puts "=" * 60
 
-  strategies.each do |name, strategy|
-    puts "\n【#{name}】"
+  strategies.each do |anon_id, strategy|
+    real_name = anonymizer.deanonymize(anon_id) || anon_id
+    puts "\n【#{real_name}】"
     thoughts = strategy.all_thoughts
 
     if thoughts.empty?

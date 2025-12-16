@@ -34,15 +34,18 @@ class Pond
     if total_catch <= @fish
       # Success: both get their catch
       @fish -= total_catch
-      # Fish reproduce
-      @fish = (@fish * @config.growth_rate).floor
+
+      # Fish reproduce with random growth rate between min and max
+      actual_growth_rate = random_growth_rate
+      @fish = (@fish * actual_growth_rate).floor
 
       TurnResult.new(
         pond_fish_before: pond_before,
         player1_catch: p1_catch,
         player2_catch: p2_catch,
         success: true,
-        pond_fish_after: @fish
+        pond_fish_after: @fish,
+        growth_rate_applied: actual_growth_rate
       )
     else
       # Overfishing: both get 0, pond depletes
@@ -54,8 +57,19 @@ class Pond
         player1_catch: p1_catch,
         player2_catch: p2_catch,
         success: false,
-        pond_fish_after: 0
+        pond_fish_after: 0,
+        growth_rate_applied: 0.0
       )
     end
+  end
+
+  private
+
+  sig { returns(Float) }
+  def random_growth_rate
+    # Generate random growth rate between min and max
+    min = @config.min_growth_rate
+    max = @config.max_growth_rate
+    min + rand * (max - min)
   end
 end

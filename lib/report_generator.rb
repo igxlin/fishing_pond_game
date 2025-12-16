@@ -5,19 +5,20 @@ require 'sorbet-runtime'
 require_relative 'types'
 require_relative 'game/round'
 require_relative 'game/tournament'
+require_relative 'game/player_anonymizer'
 require_relative 'strategy/base_strategy'
 
 class ReportGenerator
   extend T::Sig
 
-  sig { params(round_result: RoundResult, all_players_history: T::Hash[String, PlayerHistory], output_path: String, strategies: T.nilable(T::Hash[String, BaseStrategy])).void }
-  def self.generate_round_report(round_result, all_players_history, output_path, strategies = nil)
-    html = build_html(round_result, all_players_history, strategies)
+  sig { params(round_result: RoundResult, all_players_history: T::Hash[String, PlayerHistory], output_path: String, strategies: T.nilable(T::Hash[String, BaseStrategy]), anonymizer: T.nilable(PlayerAnonymizer)).void }
+  def self.generate_round_report(round_result, all_players_history, output_path, strategies = nil, anonymizer = nil)
+    html = build_html(round_result, all_players_history, strategies, anonymizer)
     File.write(output_path, html)
   end
 
-  sig { params(round_result: RoundResult, all_players_history: T::Hash[String, PlayerHistory], strategies: T.nilable(T::Hash[String, BaseStrategy])).returns(String) }
-  private_class_method def self.build_html(round_result, all_players_history, strategies)
+  sig { params(round_result: RoundResult, all_players_history: T::Hash[String, PlayerHistory], strategies: T.nilable(T::Hash[String, BaseStrategy]), anonymizer: T.nilable(PlayerAnonymizer)).returns(String) }
+  private_class_method def self.build_html(round_result, all_players_history, strategies, anonymizer)
     <<~HTML
       <!DOCTYPE html>
       <html lang="en">
@@ -151,33 +152,37 @@ class ReportGenerator
         </div>
 
         <h2>🤝 Pairings</h2>
-        #{generate_pairings_section(round_result)}
+        #{generate_pairings_section(round_result, anonymizer)}
 
         <h2>🏆 Leaderboard After Round #{round_result.round_number}</h2>
-        #{generate_leaderboard(all_players_history)}
+        #{generate_leaderboard(all_players_history, anonymizer)}
 
         <h2>📈 Strategy Insights</h2>
-        #{generate_insights(round_result, all_players_history)}
+        #{generate_insights(round_result, all_players_history, anonymizer)}
 
-        #{strategies ? "<h2>💭 Strategy Thoughts</h2>\n        #{generate_thoughts_section(round_result.round_number, strategies)}" : ""}
+        #{strategies ? "<h2>💭 Strategy Thoughts</h2>\n        #{generate_thoughts_section(round_result.round_number, strategies, anonymizer)}" : ""}
 
       </body>
       </html>
     HTML
   end
 
-  sig { params(round_result: RoundResult).returns(String) }
-  private_class_method def self.generate_pairings_section(round_result)
+  sig { params(round_result: RoundResult, anonymizer: T.nilable(PlayerAnonymizer)).returns(String) }
+  private_class_method def self.generate_pairings_section(round_result, anonymizer)
     round_result.pairing_results.map do |_key, pairing_result|
       mutual_class = round_result.pairings.any? do |p|
         (p.player1_name == pairing_result.player1_name || p.player2_name == pairing_result.player1_name) &&
         p.was_mutual_first_choice
       end ? "pairing mutual-choice" : "pairing"
 
+      # Display real names in report
+      p1_name = anonymizer ? (anonymizer.deanonymize(pairing_result.player1_name) || pairing_result.player1_name) : pairing_result.player1_name
+      p2_name = anonymizer ? (anonymizer.deanonymize(pairing_result.player2_name) || pairing_result.player2_name) : pairing_result.player2_name
+
       <<~HTML
         <div class="#{mutual_class}">
           <div class="pairing-header">
-            #{pairing_result.player1_name} vs #{pairing_result.player2_name}
+            #{p1_name} vs #{p2_name}
             #{mutual_class.include?('mutual') ? '💚 (Mutual First Choice)' : ''}
           </div>
           <table>
@@ -185,8 +190,8 @@ class ReportGenerator
               <tr>
                 <th>Turn</th>
                 <th>Pond Fish</th>
-                <th>#{pairing_result.player1_name} Catch</th>
-                <th>#{pairing_result.player2_name} Catch</th>
+                <th>#{p1_name} Catch</th>
+                <th>#{p2_name} Catch</th>
                 <th>Result</th>
                 <th>Pond After</th>
               </tr>
@@ -196,8 +201,8 @@ class ReportGenerator
             </tbody>
           </table>
           <div style="margin-top: 15px; font-weight: bold;">
-            Final Scores: #{pairing_result.player1_name}: #{pairing_result.player1_total} |
-            #{pairing_result.player2_name}: #{pairing_result.player2_total}
+            Final Scores: #{p1_name}: #{pairing_result.player1_total} |
+            #{p2_name}: #{pairing_result.player2_total}
           </div>
         </div>
       HTML
@@ -224,8 +229,8 @@ class ReportGenerator
     end.join("\n")
   end
 
-  sig { params(all_players_history: T::Hash[String, PlayerHistory]).returns(String) }
-  private_class_method def self.generate_leaderboard(all_players_history)
+  sig { params(all_players_history: T::Hash[String, PlayerHistory], anonymizer: T.nilable(PlayerAnonymizer)).returns(String) }
+  private_class_method def self.generate_leaderboard(all_players_history, anonymizer)
     scores = all_players_history.map do |name, history|
       [name, history.scores.sum]
     end.sort_by { |_name, score| -score }
@@ -240,10 +245,13 @@ class ReportGenerator
               else "#{rank}."
               end
 
+      # Display real name in report
+      display_name = anonymizer ? (anonymizer.deanonymize(name) || name) : name
+
       <<~HTML
         <tr class="#{rank_class}">
           <td>#{medal}</td>
-          <td>#{name}</td>
+          <td>#{display_name}</td>
           <td>#{total_score}</td>
         </tr>
       HTML
@@ -267,8 +275,8 @@ class ReportGenerator
     HTML
   end
 
-  sig { params(round_result: RoundResult, all_players_history: T::Hash[String, PlayerHistory]).returns(String) }
-  private_class_method def self.generate_insights(round_result, all_players_history)
+  sig { params(round_result: RoundResult, all_players_history: T::Hash[String, PlayerHistory], anonymizer: T.nilable(PlayerAnonymizer)).returns(String) }
+  private_class_method def self.generate_insights(round_result, all_players_history, anonymizer)
     # Calculate cooperation rate (successful turns / total turns)
     total_turns = round_result.pairing_results.values.sum { |pr| pr.turn_results.length }
     successful_turns = round_result.pairing_results.values.sum { |pr| pr.turn_results.count(&:success) }
@@ -291,6 +299,10 @@ class ReportGenerator
     most_greedy = avg_catches.first
     most_conservative = avg_catches.last
 
+    # Display real names
+    most_greedy_name = most_greedy ? (anonymizer ? (anonymizer.deanonymize(most_greedy[0]) || most_greedy[0]) : most_greedy[0]) : 'N/A'
+    most_conservative_name = most_conservative ? (anonymizer ? (anonymizer.deanonymize(most_conservative[0]) || most_conservative[0]) : most_conservative[0]) : 'N/A'
+
     <<~HTML
       <div class="stats">
         <div class="stat-card">
@@ -303,26 +315,38 @@ class ReportGenerator
         </div>
         <div class="stat-card">
           <div class="stat-label">Most Greedy</div>
-          <div class="stat-value" style="font-size: 1.2em;">#{most_greedy ? most_greedy[0] : 'N/A'} (#{most_greedy ? most_greedy[1] : 0})</div>
+          <div class="stat-value" style="font-size: 1.2em;">#{most_greedy_name} (#{most_greedy ? most_greedy[1] : 0})</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Most Conservative</div>
-          <div class="stat-value" style="font-size: 1.2em;">#{most_conservative ? most_conservative[0] : 'N/A'} (#{most_conservative ? most_conservative[1] : 0})</div>
+          <div class="stat-value" style="font-size: 1.2em;">#{most_conservative_name} (#{most_conservative ? most_conservative[1] : 0})</div>
         </div>
       </div>
     HTML
   end
 
-  sig { params(round_number: Integer, strategies: T::Hash[String, BaseStrategy]).returns(String) }
-  private_class_method def self.generate_thoughts_section(round_number, strategies)
-    player_names = strategies.keys.sort
+  sig { params(round_number: Integer, strategies: T::Hash[String, BaseStrategy], anonymizer: T.nilable(PlayerAnonymizer)).returns(String) }
+  private_class_method def self.generate_thoughts_section(round_number, strategies, anonymizer)
+    # Get player names and deanonymize for display
+    player_anon_ids = strategies.keys.sort
+    player_display_names = player_anon_ids.map do |anon_id|
+      anonymizer ? (anonymizer.deanonymize(anon_id) || anon_id) : anon_id
+    end
 
-    # Organize thoughts by phase and turn: { phase => { turn => { player_name => [messages] } } }
+    # Organize thoughts by phase and turn: { phase => { turn => { display_name => [messages] } } }
     organized_thoughts = {}
 
-    strategies.each do |name, strategy|
+    # Create mapping from anon_id to display name
+    id_to_display = {}
+    player_anon_ids.each_with_index do |anon_id, idx|
+      id_to_display[anon_id] = player_display_names[idx]
+    end
+
+    strategies.each do |anon_id, strategy|
       thoughts = strategy.all_thoughts[round_number]
       next if thoughts.nil? || thoughts.empty?
+
+      display_name = id_to_display[anon_id] || anon_id
 
       thoughts.each do |phase, content|
         organized_thoughts[phase] ||= {}
@@ -331,12 +355,12 @@ class ReportGenerator
           # Turn-by-turn thoughts
           content.each do |turn, messages|
             organized_thoughts[phase][turn] ||= {}
-            organized_thoughts[phase][turn][name] = messages
+            organized_thoughts[phase][turn][display_name] = messages
           end
         elsif content.is_a?(Array)
           # Phase thoughts (choose_partners)
           organized_thoughts[phase][nil] ||= {}
-          organized_thoughts[phase][nil][name] = content
+          organized_thoughts[phase][nil][display_name] = content
         end
       end
     end
@@ -350,7 +374,7 @@ class ReportGenerator
         max_messages = player_thoughts.values.map(&:length).max || 1
 
         (0...max_messages).each do |msg_idx|
-          cells = player_names.map do |name|
+          cells = player_display_names.map do |name|
             messages = player_thoughts[name] || []
             msg = messages[msg_idx]
             escaped_msg = msg ? msg.to_s.gsub('&', '&amp;').gsub('<', '&lt;').gsub('>', '&gt;') : '&nbsp;'
@@ -373,7 +397,7 @@ class ReportGenerator
         max_messages = player_thoughts.values.map(&:length).max || 1
 
         (0...max_messages).each do |msg_idx|
-          cells = player_names.map do |name|
+          cells = player_display_names.map do |name|
             messages = player_thoughts[name] || []
             msg = messages[msg_idx]
             escaped_msg = msg ? msg.to_s.gsub('&', '&amp;').gsub('<', '&lt;').gsub('>', '&gt;') : '&nbsp;'
@@ -390,7 +414,7 @@ class ReportGenerator
     end
 
     # Generate header
-    header_cells = player_names.map { |name| "<th>#{name}</th>" }.join
+    header_cells = player_display_names.map { |name| "<th>#{name}</th>" }.join
 
     <<~HTML
       <div class="thoughts">

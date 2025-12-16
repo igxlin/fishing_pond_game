@@ -5,7 +5,7 @@ require_relative '../../lib/game/pond'
 require_relative '../../lib/types'
 
 RSpec.describe Pond do
-  let(:config) { GameConfig.new }
+  let(:config) { GameConfig.new(min_growth_rate: 1.2, max_growth_rate: 1.2) }  # Fixed growth rate for deterministic tests
   let(:pond) { Pond.new(config) }
 
   describe '#initialize' do

@@ -13,7 +13,9 @@ end
 # Configuration for the game
 class GameConfig < T::Struct
   const :initial_fish, Integer, default: 100
-  const :growth_rate, Float, default: 1.2
+  const :growth_rate, Float, default: 1.2  # Deprecated: use min/max_growth_rate instead
+  const :min_growth_rate, Float, default: 1.15
+  const :max_growth_rate, Float, default: 1.25
   const :max_catch_per_turn, Integer, default: 30
   const :turns_per_pairing, Integer, default: 10
 end
@@ -25,6 +27,7 @@ class TurnResult < T::Struct
   const :player2_catch, Integer
   const :success, T::Boolean
   const :pond_fish_after, Integer
+  const :growth_rate_applied, Float, default: 0.0  # Actual growth rate used this turn
 end
 
 # Pairing of two players
