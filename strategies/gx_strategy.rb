@@ -97,9 +97,9 @@ class GxStrategy < BaseStrategy
     player_name = ''
 
     all_players_history.each do |pname, player_history|
-      player_history.catches.each do |arr|
-        next if players_excluded.include?(pname)
+      next if players_excluded.include?(pname)
 
+      player_history.catches.each do |arr|
         score = arr.sum
         next if score <= best_score
 
